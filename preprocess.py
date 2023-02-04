@@ -3,6 +3,9 @@ import json
 import xml.etree.ElementTree as ET
 import numpy as np
 import yaml
+import shutil
+from sklearn.model_selection import train_test_split
+
 
 
 # xml에서 파싱하여 image_list와 label을 읽어오고 기존의 label에 부여된 숫자와 비교한 뒤, 추가될 부분은 추가합니다.
@@ -104,17 +107,34 @@ def make_label_txt(folder, img_list, label_dict):
   # img_list 내의 모든 image에 대해서 label 값에 해당하는 폴리곤 마스킹 txt를 만든다
 
 
+  # 폴더가 없으면 만드는 함수
+  def make_dir(dir_name):
+    dir_path = os.path.join(os.getcwd(),dir_name)
+    if not os.path.exists(dir_path):
+        os.makedirs(dir_path)
+        print(f"Folder {dir_path} created.")
+    else:
+        print(f"Folder {dir_path} already exists.")
+    
+    return dir_path
+
+
   # labels 폴더가 없을 경우 생성
-  labels_path = folder + "/labels"
-  if not os.path.exists(labels_path):
-    os.makedirs(labels_path)
-    print(f"Folder {labels_path} created.")
-  else:
-    print(f"Folder {labels_path} already exists.")
+  labels_path = make_dir("labels")
+  # images 폴더가 없을 경우 생성
+  images_path = make_dir("images")
+
+  make_dir("labels/train")
+  make_dir("labels/val")
+  make_dir("labels/test")
+
+  make_dir("images/train")
+  make_dir("images/val")
+  make_dir("images/test")
 
   for img in img_list:
     img_name = img.attrib['name']
-    img_path = folder+"/"+img_name
+    img_path = os.path.join(folder, img_name)
     label_path = labels_path + "/" + img_name + ".txt"
     polygons = img.findall('polygon')
     label_txt = yolo_label_txt_transform(polygons, label_dict)
@@ -127,6 +147,9 @@ def make_label_txt(folder, img_list, label_dict):
       except FileNotFoundError:
         print(f"{img_path} does not exist.")
       continue
+    else:
+      shutil.move(img_path, os.path.join(images_path, img_name))
+      print(f"{img_path} has been moved to images dir.")
 
     with open(label_path, "w") as file:
         file.write(label_txt)
@@ -171,14 +194,51 @@ def make_data_yaml():
 
   data = {}
 
-  train_path = "../train/images"
-  val_path = "../valid/images"
+  train_path = "../dataset/images/train/"
+  val_path = "../dataset/images/val/"
+  test_path = "../dataset/images/test/"
 
   data['names'] = list(label_dict.keys())
   data['nc'] = len(label_dict)
   data['train'] = train_path
   data['val'] = val_path
+  data['test'] = test_path
 
   with open('./data.yaml', 'w') as f:
     yaml.dump(data, f)
-  print("data.yaml 생성 완료!")  
+  print("data.yaml 생성 완료!") 
+
+
+#Utility function to move images 
+def move_files_to_folder(list_of_files, destination_folder):
+    for f in list_of_files:
+        try:
+            shutil.move(f, destination_folder)
+        except:
+            print(f)
+            assert False
+
+
+def holdout_split():
+    # Read images and annotations
+    images = [os.path.join('images', x) for x in os.listdir('images') if x[-3:] == "jpg"]
+    annotations = [os.path.join('labels', x) for x in os.listdir('labels') if x[-3:] == "txt"]
+
+    images.sort()
+    annotations.sort()
+
+    # Split the dataset into train-valid-test splits 
+    train_images, val_images, train_annotations, val_annotations = train_test_split(images, annotations, test_size = 0.2, random_state = 42)
+    val_images, test_images, val_annotations, test_annotations = train_test_split(val_images, val_annotations, test_size = 0.5, random_state = 42)
+
+    # Move the splits into their folders
+    move_files_to_folder(train_images, 'images/train')
+    move_files_to_folder(val_images, 'images/val/')
+    move_files_to_folder(test_images, 'images/test/')
+    move_files_to_folder(train_annotations, 'labels/train/')
+    move_files_to_folder(val_annotations, 'labels/val/')
+    move_files_to_folder(test_annotations, 'labels/test/')
+
+    print("hold-out 완료")
+
+    
