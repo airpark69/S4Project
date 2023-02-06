@@ -5,8 +5,11 @@ import numpy as np
 import yaml
 import shutil
 from sklearn.model_selection import train_test_split
+from collections import Counter
 
 
+# label 불균형 확인하기 위한 counter
+label_cv = Counter()
 
 # xml에서 파싱하여 image_list와 label을 읽어오고 기존의 label에 부여된 숫자와 비교한 뒤, 추가될 부분은 추가합니다.
 def load_xml(xml_path ,label_path="./label.json"):
@@ -35,7 +38,7 @@ def load_xml(xml_path ,label_path="./label.json"):
     print("label.json 새로 생성됨")
     label_dict = {}
 
-  label_split_list = ['person','scooter','bicycle','motorcycle']
+  label_split_list = ['person','scooter','bicycle','motorcycle', 'sidewalk', 'roadway', 'alley', 'bike_lane']
     
   for label in label_list:
     if label in label_split_list:
@@ -79,8 +82,10 @@ def yolo_label_txt_transform(polygons, label_dict):
 
   for polygon in polygons:
       img_label = polygon.attrib['label']
+      # 해당 라벨이 없을 경우 이 폴리곤은 제외한다
       if label_dict.get(img_label) is None:
         continue
+      label_cv.update([img_label])
       img_polygon = polygon.attrib['points']
 
       point_list = img_polygon.split(';')
@@ -117,25 +122,26 @@ def make_label_txt(folder, img_list, label_dict):
         print(f"Folder {dir_path} already exists.")
     
     return dir_path
-
-
+  
+  # dataset 폴더가 없을 경우 생성
+  make_dir("dataset")
   # labels 폴더가 없을 경우 생성
-  labels_path = make_dir("labels")
+  labels_path = make_dir("./dataset/labels")
   # images 폴더가 없을 경우 생성
-  images_path = make_dir("images")
+  images_path = make_dir("./dataset/images")
 
-  make_dir("labels/train")
-  make_dir("labels/val")
-  make_dir("labels/test")
+  make_dir("./dataset/labels/train")
+  make_dir("./dataset/labels/val")
+  make_dir("./dataset/labels/test")
 
-  make_dir("images/train")
-  make_dir("images/val")
-  make_dir("images/test")
+  make_dir("./dataset/images/train")
+  make_dir("./dataset/images/val")
+  make_dir("./dataset/images/test")
 
   for img in img_list:
     img_name = img.attrib['name']
     img_path = os.path.join(folder, img_name)
-    label_path = labels_path + "/" + img_name + ".txt"
+    label_path = labels_path + "/" + img_name[:-4] + ".txt" ## 확장자 .jpg는 제거한 상태로 넣어줘야함
     polygons = img.findall('polygon')
     label_txt = yolo_label_txt_transform(polygons, label_dict)
 
@@ -148,8 +154,12 @@ def make_label_txt(folder, img_list, label_dict):
         print(f"{img_path} does not exist.")
       continue
     else:
-      shutil.move(img_path, os.path.join(images_path, img_name))
-      print(f"{img_path} has been moved to images dir.")
+      try:
+        shutil.move(img_path, os.path.join(images_path, img_name))
+        print(f"{img_path} has been moved to images dir.")
+      except:
+        print(f"{img_path} already moved to images dir.")
+        continue
 
     with open(label_path, "w") as file:
         file.write(label_txt)
@@ -164,7 +174,6 @@ def preprocessing(folder):
         for xml_file in xml_files:
             file_path = os.path.join(folder, xml_file)
 
-
         img_list, label_dict = load_xml(file_path)
 
         make_label_txt(folder, img_list, label_dict)
@@ -173,6 +182,8 @@ def preprocessing(folder):
 
     for dir in os.listdir(folder):
         sub_dir_path = os.path.join(folder, dir)
+        if dir in ['images', 'labels']:
+          continue
         print(sub_dir_path)
         if os.path.isdir(sub_dir_path):
     
@@ -194,12 +205,18 @@ def make_data_yaml():
 
   data = {}
 
-  train_path = "../dataset/images/train/"
-  val_path = "../dataset/images/val/"
-  test_path = "../dataset/images/test/"
+  root_path = "/content/dataset/" ## 사용 환경에 맞게 바꿔줘야 합니다
+  train_path = "images/train/"
+  val_path = "images/val/"
+  test_path = "images/test/"
 
-  data['names'] = list(label_dict.keys())
+  new_label_dict = {}
+  for k, v in label_dict.items():
+      new_label_dict[v] = k
+
+  data['names'] = new_label_dict
   data['nc'] = len(label_dict)
+  data['path'] = root_path
   data['train'] = train_path
   data['val'] = val_path
   data['test'] = test_path
@@ -220,25 +237,48 @@ def move_files_to_folder(list_of_files, destination_folder):
 
 
 def holdout_split():
+    images_path = "./dataset/images"
+    labels_path = "./dataset/labels"
+
     # Read images and annotations
-    images = [os.path.join('images', x) for x in os.listdir('images') if x[-3:] == "jpg"]
-    annotations = [os.path.join('labels', x) for x in os.listdir('labels') if x[-3:] == "txt"]
+    images = [x[:-4] for x in os.listdir(images_path) if x[-3:] == "jpg"]
+    annotations = [x[:-4] for x in os.listdir(labels_path) if x[-3:] == "txt"]
 
     images.sort()
     annotations.sort()
+    
+    solo_list = []
+
+    for a in annotations:
+      if a not in images:
+        solo_list.append(a)
+
+    for a in solo_list:
+      annotations.remove(a)
+
+    images = [os.path.join(images_path, x + ".jpg") for x in images]
+    annotations = [os.path.join(labels_path, x + ".txt") for x in annotations]
+
 
     # Split the dataset into train-valid-test splits 
     train_images, val_images, train_annotations, val_annotations = train_test_split(images, annotations, test_size = 0.2, random_state = 42)
     val_images, test_images, val_annotations, test_annotations = train_test_split(val_images, val_annotations, test_size = 0.5, random_state = 42)
 
     # Move the splits into their folders
-    move_files_to_folder(train_images, 'images/train')
-    move_files_to_folder(val_images, 'images/val/')
-    move_files_to_folder(test_images, 'images/test/')
-    move_files_to_folder(train_annotations, 'labels/train/')
-    move_files_to_folder(val_annotations, 'labels/val/')
-    move_files_to_folder(test_annotations, 'labels/test/')
+    move_files_to_folder(train_images, './dataset/images/train')
+    move_files_to_folder(val_images, './dataset/images/val/')
+    move_files_to_folder(test_images, './dataset/images/test/')
+    move_files_to_folder(train_annotations, './dataset/labels/train/')
+    move_files_to_folder(val_annotations, './dataset/labels/val/')
+    move_files_to_folder(test_annotations, './dataset/labels/test/')
 
     print("hold-out 완료")
+
+    dir_path = "./dataset"
+
+    for sub in os.listdir(dir_path):
+      if sub not in ['images', 'labels']:
+        shutil.rmtree(os.path.join(dir_path, sub))
+    print("기존에 있던 images,labels를 제외한 폴더 삭제 완료")
 
     
