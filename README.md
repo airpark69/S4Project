@@ -17,3 +17,5 @@
 - 데이터셋 크기로 인해 Incremental Learning을 구현할 수 있을 것
 
 정도의 필요 조건을 고려하고 객체 탐지 모델을 설계한다. 
+
+https://youtu.be/K5ci7Q-asVQ
